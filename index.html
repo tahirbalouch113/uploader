@@ -360,7 +360,7 @@
     }
 
     .progress-container {
-      margin-top: 16px;
+      margin: 16px 2px;
       padding: 14px;
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -369,10 +369,9 @@
     }
     .progress-bar {
       height: 24px;
-      background: linear-gradient(90deg, var(--accent), var(--accent2));
       border-radius: 12px;
       width: 0%;
-      transition: width 0.3s ease;
+      transition: width 0.3s ease, background 0.3s ease;
     }
     .progress-text {
       position: absolute;
@@ -440,14 +439,15 @@
       </div>
     </div>
 
-    <div id="results" class="results"></div>
-    <div id="empty" class="empty" style="display:none">Start by searching a title ↑</div>
-    <div id="resultBox" class="result-box" style="display:none"></div>
     <div class="progress-container" id="progressContainer" style="display:none">
       <img id="statusImage" class="status-image" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23ffcc66' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M17.66 6.34l1.41-1.41'/%3E%3C/svg%3E" alt="Status">
       <div class="progress-bar" id="progressBar"></div>
       <div class="progress-text" id="progressText">0%</div>
     </div>
+
+    <div id="results" class="results"></div>
+    <div id="empty" class="empty" style="display:block">Start by searching a title ↑</div>
+    <div id="resultBox" class="result-box" style="display:none"></div>
     <div class="debug-container">
       <div class="debug-header">
         <h3>Debug Output</h3>
@@ -507,7 +507,7 @@
     function showResultBox(s) { resultBoxEl.style.display = s ? 'block' : 'none'; }
     function showProgress(s) {
       progressContainerEl.style.display = s ? 'block' : 'none';
-      if (!s) statusImageEl.src = STATUS_IMAGES.success;
+      if (!s) statusImageEl.src = STATUS_IMAGES.uploading; // Reset to uploading icon when hidden
     }
 
     function logDebug(message, data = null) {
@@ -533,8 +533,10 @@
     }
 
     function updateProgressBar(percentage) {
-      progressBarEl.style.width = `${percentage}%`;
-      progressTextEl.textContent = `${percentage}%`;
+      const displayPercentage = percentage >= 0 ? percentage : 0; // Avoid negative percentage
+      progressBarEl.style.width = `${displayPercentage}%`;
+      progressTextEl.textContent = `${displayPercentage}%`;
+      progressBarEl.style.background = percentage >= 0 ? 'var(--ok)' : 'var(--danger)';
       if (percentage >= 100) {
         statusImageEl.src = STATUS_IMAGES.success;
       } else if (percentage < 0) {
