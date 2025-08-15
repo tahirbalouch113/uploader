@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Movie & Web Series Search</title>
+  <style>
+    :root {
+      --bg: #0b0f1e;
+      --bg2: #131a33;
+      --surface: rgba(255,255,255,0.06);
+      --border: rgba(255,255,255,0.08);
+      --text: #e9ecff;
+      --muted: #a9b1d6;
+      --accent: #00d1ff;
+      --accent2: #7c4dff;
+      --ok: #00e0a4;
+      --warn: #ffcc66;
+      --danger: #ff6b6b;
+      --ring: 0 0 0 2px rgba(0,209,255,.35), 0 0 40px rgba(124,77,255,.22);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100%;
+      font-family: Inter, ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(900px 500px at 10% -20%, rgba(124,77,255,.12), transparent 40%),
+        radial-gradient(900px 600px at 110% 10%, rgba(0,209,255,.1), transparent 40%),
+        linear-gradient(135deg, var(--bg), var(--bg2));
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 16px;
+      overflow-x: hidden;
+    }
+
+    .container {
+      position: relative;
+      max-width: 1200px;
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      backdrop-filter: blur(12px);
+      box-shadow: 0 20px 60px rgba(0,0,0,.45);
+      padding: 20px;
+    }
+    .glow {
+      position: absolute;
+      inset: -2px;
+      border-radius: 22px;
+      pointer-events: none;
+      box-shadow: 0 0 120px rgba(124,77,255,.12), 0 0 120px rgba(0,209,255,.10);
+    }
+
+    header { display: grid; gap: 6px; margin-bottom: 14px; }
+    h1 {
+      margin: 0;
+      font-size: clamp(1.6rem, 2.5vw, 2rem);
+      letter-spacing: .3px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    h1 .logo {
+      display: grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(45deg, var(--accent), var(--accent2));
+      box-shadow: 0 10px 30px rgba(0,209,255,.35);
+    }
+    .sub { color: var(--muted); margin: 0; font-size: 0.9rem; }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .search {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 8px 12px;
+      background: var(--surface);
+      transition: box-shadow .15s, border .15s;
+    }
+    .search:focus-within {
+      box-shadow: var(--ring);
+      border-color: rgba(0,209,255,.35);
+    }
+    .search input {
+      flex: 1;
+      min-width: 0;
+      background: transparent;
+      border: 0;
+      outline: none;
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+    .btn {
+      border: 0;
+      border-radius: 12px;
+      padding: 10px 20px;
+      cursor: pointer;
+      color: white;
+      font-weight: 600;
+      letter-spacing: .3px;
+      background: linear-gradient(45deg, var(--accent), var(--accent2));
+      box-shadow: 0 10px 24px rgba(0,209,255,.22);
+      transition: transform .12s ease, filter .12s ease;
+    }
+    .btn:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.05);
+    }
+    .btn.cancel {
+      background: var(--danger);
+      box-shadow: 0 10px 24px rgba(255,107,107,.22);
+    }
+
+    .metaRow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin: 12px 2px 0;
+    }
+    .badge {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.05);
+      color: var(--muted);
+      font-size: .88rem;
+    }
+
+    .results {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 200px));
+      gap: 12px;
+      margin-top: 16px;
+      justify-content: center;
+    }
+    .card {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      cursor: pointer;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      transition: transform .15s ease, box-shadow .2s ease, border-color .15s;
+      min-height: 300px;
+      max-width: 200px;
+    }
+    .card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 18px 40px rgba(0,0,0,.35);
+      border-color: rgba(0,209,255,.28);
+    }
+    .poster {
+      width: 100%;
+      max-width: 200px;
+      height: 240px;
+      object-fit: cover;
+      background: #0d122b;
+      display: block;
+    }
+    .cardBody {
+      padding: 8px 10px 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: calc(100% - 240px);
+    }
+    .title {
+      font-size: 0.95rem;
+      margin: 4px 0 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .meta {
+      font-size: .82rem;
+      color: var(--muted);
+    }
+    .pill {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: rgba(0,0,0,.5);
+      backdrop-filter: blur(4px);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: .75rem;
+    }
+
+    .loader {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      border: 4px solid rgba(255,255,255,.12);
+      border-top-color: var(--accent);
+      animation: spin .9s linear infinite;
+      box-shadow: 0 0 20px rgba(0,209,255,.35) inset;
+      display: none;
+      z-index: 50;
+    }
+    .loader.show { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .skeleton { position: relative; overflow: hidden; }
+    .skeleton::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(110deg, rgba(255,255,255,0), rgba(255,255,255,.08), rgba(255,255,255,0));
+      transform: translateX(-100%);
+      animation: shimmer 1.2s infinite;
+    }
+    @keyframes shimmer { to { transform: translateX(100%); } }
+    .skeleton.poster {
+      background: linear-gradient(180deg, #0b0f25, #151d41);
+      height: 240px;
+      max-width: 200px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #19214b;
+      border: 1px solid var(--border);
+      padding: 12px 14px;
+      border-radius: 12px;
+      color: #fff;
+      display: none;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      z-index: 60;
+    }
+    .toast.show { display: block; }
+    .toast.danger { border-color: rgba(255,107,107,.35); color: #ffdede; }
+
+    .empty {
+      display: grid;
+      place-items: center;
+      height: 120px;
+      color: var(--muted);
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      margin-top: 16px;
+    }
+
+    .dialog {
+      background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.04));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 20px 60px rgba(0,0,0,.45);
+      backdrop-filter: blur(12px);
+      z-index: 60;
+      color: var(--text);
+    }
+    .dialog h2 {
+      margin: 0 0 12px;
+      font-size: 1.2rem;
+    }
+    .dialog p {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .dialog .btn-group {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .result-box {
+      margin-top: 16px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255,255,255,.05);
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+    .result-box p {
+      margin: 8px 0;
+    }
+    .result-box a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .result-box a:hover {
+      text-decoration: underline;
+    }
+
+    .debug-container {
+      margin-top: 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255,255,255,.05);
+      overflow: hidden;
+      z-index: 55;
+    }
+    .debug-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: rgba(255,255,255,.03);
+      border-bottom: 1px solid var(--border);
+    }
+    .debug-header h3 {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--text);
+    }
+    .debug-toggle {
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 4px 8px;
+      transition: color .15s ease;
+    }
+    .debug-toggle:hover {
+      color: var(--accent2);
+    }
+    .debug-content {
+      display: block;
+      max-height: 300px;
+      overflow-y: auto;
+      padding: 12px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.85rem;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .debug-content.show {
+      display: block;
+    }
+
+    .progress-container {
+      margin-top: 16px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255,255,255,.05);
+      position: relative;
+    }
+    .progress-bar {
+      height: 20px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 10px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    .progress-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 0.9rem;
+      color: var(--text);
+      font-weight: 600;
+    }
+    .status-image {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
+      z-index: 10;
+      filter: drop-shadow(0 0 6px rgba(0,0,0,.3));
+    }
+
+    @media (max-width: 560px) {
+      .controls { grid-template-columns: 1fr; }
+      .results { grid-template-columns: repeat(auto-fill, minmax(140px, 180px)); gap: 10px; }
+      .card { min-height: 260px; max-width: 180px; }
+      .poster { height: 200px; max-width: 180px; }
+      .cardBody { height: calc(100% - 200px); padding: 6px 8px 10px; }
+      .skeleton.poster { height: 200px; max-width: 180px; }
+      .title { font-size: 0.9rem; }
+      .meta { font-size: .78rem; }
+      .pill { top: 6px; left: 6px; padding: 2px 6px; font-size: .7rem; }
+      .dialog { padding: 16px; }
+      .dialog h2 { font-size: 1.1rem; }
+      .dialog p { font-size: 0.85rem; }
+      .debug-content { font-size: 0.8rem; max-height: 200px; }
+      .loader { width: 32px; height: 32px; border-width: 3px; }
+      .progress-container { padding: 8px; }
+      .progress-text { font-size: 0.8rem; }
+      .status-image { width: 24px; height: 24px; top: 6px; right: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="glow"></div>
+    <div id="loader" class="loader"></div>
+    <header>
+      <h1><span class="logo">🎬</span> Movie & Web Series Search</h1>
+      <p class="sub">Beautiful UI · Server-side scraping via FastAPI on <strong>38.102.124.94:3002</strong></p>
+    </header>
+
+    <div class="controls">
+      <label class="search" for="searchInput">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="opacity:.7"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="searchInput" placeholder="Try: Interstellar, Dune, Squid Game…" />
+      </label>
+      <button class="btn" id="searchBtn" type="button">Search</button>
+    </div>
+
+    <div class="metaRow">
+      <div class="badge" id="apiBadge">API: http://38.102.124.94:3002/api/scrape</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="badge">Press <strong>Enter</strong> ↵</span>
+        <span class="badge">Click a card to open</span>
+      </div>
+    </div>
+
+    <div id="results" class="results"></div>
+    <div id="empty" class="empty" style="display:none">Start by searching a title ↑</div>
+    <div id="resultBox" class="result-box" style="display:none"></div>
+    <div class="progress-container" id="progressContainer" style="display:none">
+      <img id="statusImage" class="status-image" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23ffcc66' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M17.66 6.34l1.41-1.41'/%3E%3C/svg%3E" alt="Status">
+      <div class="progress-bar" id="progressBar"></div>
+      <div class="progress-text" id="progressText">0%</div>
+    </div>
+    <div class="debug-container">
+      <div class="debug-header">
+        <h3>Debug Output</h3>
+        <button class="debug-toggle" id="debugToggle">Hide</button>
+      </div>
+      <pre id="debugContent" class="debug-content show"></pre>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <div id="dialog" class="overlay" style="display:none">
+    <div class="dialog">
+      <h2>Confirm Upload</h2>
+      <p>Are you sure you want to upload this title?</p>
+      <div class="btn-group">
+        <button class="btn cancel" id="dialogCancel">Cancel</button>
+        <button class="btn" id="dialogConfirm">Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://38.102.124.94:3002';
+    const resultsEl = document.getElementById('results');
+    const loaderEl = document.getElementById('loader');
+    const toastEl = document.getElementById('toast');
+    const emptyEl = document.getElementById('empty');
+    const dialogEl = document.getElementById('dialog');
+    const resultBoxEl = document.getElementById('resultBox');
+    const debugContentEl = document.getElementById('debugContent');
+    const debugToggleEl = document.getElementById('debugToggle');
+    const progressContainerEl = document.getElementById('progressContainer');
+    const progressBarEl = document.getElementById('progressBar');
+    const progressTextEl = document.getElementById('progressText');
+    const statusImageEl = document.getElementById('statusImage');
+    const MAX_CLOUD_DOWNLOAD_RETRIES = 3;
+    let eventSource = null;
+
+    const STATUS_IMAGES = {
+      uploading: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23ffcc66' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M17.66 6.34l1.41-1.41'/%3E%3C/svg%3E",
+      success: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%2300e0a4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E",
+      error: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23ff6b6b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 6L6 18M6 6l12 12'/%3E%3C/svg%3E"
+    };
+
+    function showLoader(s) { loaderEl.classList.toggle('show', !!s); }
+    function toast(msg, danger = false) {
+      toastEl.textContent = msg;
+      toastEl.className = 'toast' + (danger ? ' danger' : '');
+      toastEl.classList.add('show');
+      clearTimeout(toastEl._t);
+      toastEl._t = setTimeout(() => toastEl.classList.remove('show'), 3200);
+    }
+    function clearGrid() { resultsEl.innerHTML = ''; }
+    function showDialog(s) { dialogEl.style.display = s ? 'grid' : 'none'; }
+    function showResultBox(s) { resultBoxEl.style.display = s ? 'block' : 'none'; }
+    function showProgress(s) {
+      progressContainerEl.style.display = s ? 'block' : 'none';
+      statusImageEl.src = s ? STATUS_IMAGES.uploading : STATUS_IMAGES.success;
+    }
+
+    function logDebug(message, data = null) {
+      const timestamp = new Date().toISOString();
+      const formattedData = data ? JSON.stringify(data, null, 2) : '';
+      debugContentEl.textContent += `[${timestamp}] ${message}\n${formattedData ? formattedData + '\n\n' : ''}`;
+      debugContentEl.scrollTop = debugContentEl.scrollHeight;
+    }
+
+    function updateProgressBar(percentage) {
+      progressBarEl.style.width = `${percentage}%`;
+      progressTextEl.textContent = `${percentage}%`;
+      if (percentage >= 100) {
+        statusImageEl.src = STATUS_IMAGES.success;
+      }
+    }
+
+    function startProgressStream(taskId) {
+      if (eventSource) {
+        eventSource.close();
+      }
+      showProgress(true);
+      updateProgressBar(0);
+      statusImageEl.src = STATUS_IMAGES.uploading;
+      eventSource = new EventSource(`${API_BASE}/api/progress?task_id=${taskId}`);
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        logDebug(data.log);
+        updateProgressBar(data.progress);
+        if (data.progress >= 100) {
+          eventSource.close();
+          eventSource = null;
+          setTimeout(() => showProgress(false), 1000);
+        }
+      };
+      eventSource.onerror = () => {
+        logDebug('Progress stream error or closed');
+        statusImageEl.src = STATUS_IMAGES.error;
+        eventSource.close();
+        eventSource = null;
+        showProgress(false);
+      };
+    }
+
+    debugToggleEl.addEventListener('click', () => {
+      const isShown = debugContentEl.classList.toggle('show');
+      debugToggleEl.textContent = isShown ? 'Hide' : 'Show';
+    });
+
+    function cardSkeleton() {
+      const wrap = document.createElement('div');
+      wrap.className = 'card';
+      wrap.innerHTML = '<div class="poster skeleton"></div><div class="cardBody"><div class="title skeleton" style="height:16px;border-radius:6px"></div><div class="meta skeleton" style="height:12px;margin-top:8px;border-radius:6px"></div></div>';
+      return wrap;
+    }
+    function setLoadingGrid(on) {
+      clearGrid();
+      if (on) { for (let i = 0; i < 8; i++) resultsEl.appendChild(cardSkeleton()); }
+    }
+
+    function buildCard(item) {
+      const el = document.createElement('div');
+      el.className = 'card';
+      const poster = item.poster ? `<img class="poster" loading="lazy" src="${item.poster}" alt="${item.title}">` : `<div class="poster skeleton"></div>`;
+      el.innerHTML = `${poster}<div class="cardBody"><div class="title" title="${item.title}">${item.title}</div><div class="meta">${item.type || ''}${item.year ? ' • ' + item.year : ''}</div></div>`;
+      const tag = document.createElement('div');
+      tag.className = 'pill';
+      tag.textContent = item.type ? String(item.type).toUpperCase() : 'TITLE';
+      el.appendChild(tag);
+      el.addEventListener('click', () => {
+        showDialog(true);
+        document.getElementById('dialogConfirm').onclick = () => uploadItem(item);
+        document.getElementById('dialogCancel').onclick = () => showDialog(false);
+      });
+      return el;
+    }
+
+    async function tryCloudDownload(payload, attempt = 1) {
+      logDebug(`Sending request to: ${API_BASE}/api/cloud-download (Attempt ${attempt}/${MAX_CLOUD_DOWNLOAD_RETRIES})`);
+      logDebug('POST /api/cloud-download request', payload);
+      try {
+        const cloudDownloadRes = await fetch(`${API_BASE}/api/cloud-download`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!cloudDownloadRes.ok) throw new Error(`POST /api/cloud-download error: ${cloudDownloadRes.status}`);
+        const cloudDownloadData = await cloudDownloadRes.json();
+        logDebug('POST /api/cloud-download response', cloudDownloadData);
+        return { success: true, data: cloudDownloadData };
+      } catch (err) {
+        logDebug(`Cloud download attempt ${attempt} failed`, { error: err.message });
+        if (attempt < MAX_CLOUD_DOWNLOAD_RETRIES) {
+          logDebug(`Retrying cloud download (Attempt ${attempt + 1}/${MAX_CLOUD_DOWNLOAD_RETRIES})`);
+          return tryCloudDownload(payload, attempt + 1);
+        }
+        return { success: false, error: err.message };
+      }
+    }
+
+    async function uploadItem(item) {
+      showDialog(false);
+      showLoader(true);
+      let postData, downloadData;
+      const taskId = crypto.randomUUID();
+      startProgressStream(taskId);
+      try {
+        logDebug(`Sending request to: ${API_BASE}/api/scrape`);
+        logDebug('POST /api/scrape request', { url: item.url });
+        const postRes = await fetch(`${API_BASE}/api/scrape`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ url: item.url })
+        });
+        if (!postRes.ok) throw new Error(`POST /api/scrape error: ${postRes.status}`);
+        postData = await postRes.json();
+        logDebug('POST /api/scrape response', postData);
+        
+        logDebug(`Sending request to: ${API_BASE}/api/download?url=${encodeURIComponent(postData.gd_link)}`);
+        logDebug('GET /api/download request', { url: postData.gd_link });
+        const downloadRes = await fetch(`${API_BASE}/api/download?url=${encodeURIComponent(postData.gd_link)}`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        if (!downloadRes.ok) throw new Error(`GET /api/download error: ${downloadRes.status}`);
+        downloadData = await downloadRes.json();
+        logDebug('GET /api/download response', downloadData);
+
+        if (downloadData.status !== 'completed' || !downloadData.cloud_url) {
+          throw new Error(`Download failed: ${downloadData.status}`);
+        }
+
+        const cloudDownloadPayload = {
+          mode: postData.mode,
+          name: postData.title,
+          season_number: postData.mode === 'TV' ? postData.season_nr : null,
+          file_name: downloadData.cloud_filename || 'default.mkv',
+          link: downloadData.cloud_url,
+          task_id: taskId
+        };
+        const cloudDownloadResult = await tryCloudDownload(cloudDownloadPayload);
+        
+        const cloudDownloadStatus = cloudDownloadResult.success ? cloudDownloadResult.data.status : 'failed';
+        const destinationPath = cloudDownloadResult.success ? (cloudDownloadResult.data.destination_path || 'N/A') : 'N/A';
+        
+        resultBoxEl.innerHTML = `
+          <p><strong>Title:</strong> ${postData.title}</p>
+          <p><strong>Season:</strong> ${postData.season_nr}</p>
+          <p><strong>Download Status:</strong> ${downloadData.status}</p>
+          <p><strong>Cloud Download Status:</strong> ${cloudDownloadStatus}</p>
+          <p><strong>Destination Path:</strong> ${destinationPath}</p>
+        `;
+        showResultBox(true);
+        if (cloudDownloadResult.success) {
+          toast('Upload and download completed successfully!', false);
+          statusImageEl.src = STATUS_IMAGES.success;
+        } else {
+          toast('Cloud download failed after retries. Check debug output for details.', true);
+          statusImageEl.src = STATUS_IMAGES.error;
+        }
+      } catch (err) {
+        console.error(err);
+        logDebug('Error during upload, download, or cloud download', { error: err.message });
+        toast('Error during process. Is FastAPI running on 38.102.124.94:3002?', true);
+        statusImageEl.src = STATUS_IMAGES.error;
+        if (postData) {
+          resultBoxEl.innerHTML = `
+            <p><strong>Title:</strong> ${postData.title}</p>
+            <p><strong>Season:</strong> ${postData.season_nr}</p>
+            <p><strong>Download Status:</strong> ${downloadData ? downloadData.status : 'failed'}</p>
+            <p><strong>Cloud Download Status:</strong> failed</p>
+            <p><strong>Destination Path:</strong> N/A</p>
+          `;
+          showResultBox(true);
+        }
+      } finally {
+        showLoader(false);
+      }
+    }
+
+    async function search() {
+      const q = document.getElementById('searchInput').value.trim();
+      if (!q) {
+        toast('Please enter a search query.', true);
+        emptyEl.style.display = 'block';
+        return;
+      }
+      emptyEl.style.display = 'none';
+      setLoadingGrid(true);
+      showLoader(true);
+      try {
+        logDebug(`Sending request to: ${API_BASE}/api/scrape?q=${encodeURIComponent(q)}`);
+        logDebug('GET /api/scrape request', { query: q });
+        const res = await fetch(`${API_BASE}/api/scrape?q=${encodeURIComponent(q)}`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+        const data = await res.json();
+        logDebug('GET /api/scrape response', data);
+        clearGrid();
+        if (!data.results || !data.results.length) {
+          emptyEl.style.display = 'block';
+          emptyEl.textContent = 'No results found';
+          return;
+        }
+        const limitedResults = data.results.slice(0, 40);
+        for (const it of limitedResults) {
+          resultsEl.appendChild(buildCard(it));
+        }
+      } catch (err) {
+        console.error(err);
+        logDebug('Error fetching results', { error: err.message });
+        toast('Error fetching results. Is FastAPI running on 38.102.124.94:3002?', true);
+      } finally {
+        showLoader(false);
+      }
+    }
+
+    document.getElementById('searchBtn').addEventListener('click', search);
+    document.getElementById('searchInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        search();
+      }
+    });
+
+    emptyEl.style.display = 'block';
+  </script>
+</body>
+</html>
