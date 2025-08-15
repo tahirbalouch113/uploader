@@ -484,6 +484,7 @@
     const statusImageEl = document.getElementById('statusImage');
     let eventSource = null;
     let isUploading = false; // Lock to prevent double-clicks
+    let currentTaskId = null; // Track current task ID
 
     const STATUS_IMAGES = {
       uploading: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23ffcc66' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M17.66 6.34l1.41-1.41'/%3E%3C/svg%3E",
@@ -504,7 +505,7 @@
     function showResultBox(s) { resultBoxEl.style.display = s ? 'block' : 'none'; }
     function showProgress(s) {
       progressContainerEl.style.display = s ? 'block' : 'none';
-      statusImageEl.src = s ? STATUS_IMAGES.uploading : STATUS_IMAGES.success;
+      if (!s) statusImageEl.src = STATUS_IMAGES.success;
     }
 
     function logDebug(message, data = null) {
@@ -524,52 +525,118 @@
       }
     }
 
-    function startProgressStream(taskId) {
-      if (eventSource) {
-        eventSource.close();
+    async function checkTaskStatus(taskId) {
+      try {
+        logDebug(`Checking task status: ${API_BASE}/api/progress?task_id=${taskId}`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const res = await fetch(`${API_BASE}/api/progress?task_id=${taskId}`, {
+          headers: { 'Accept': 'application/json' },
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error(`Task status check error: ${res.status}`);
+        const data = await res.json();
+        logDebug('Task status response', data);
+        if (data.progress !== undefined) {
+          updateProgressBar(data.progress);
+          if (data.log) logDebug(data.log);
+          if (data.progress < 0) {
+            statusImageEl.src = STATUS_IMAGES.error;
+            toast(data.log || 'Process failed.', true);
+            showProgress(false);
+            isUploading = false;
+            currentTaskId = null;
+            return { completed: false };
+          }
+          if (data.progress >= 100 && data.result) {
+            statusImageEl.src = STATUS_IMAGES.success;
+            resultBoxEl.innerHTML = `
+              <p><strong>Title:</strong> ${data.result.title}</p>
+              <p><strong>Season:</strong> ${data.result.season_nr || 'N/A'}</p>
+              <p><strong>Download Status:</strong> ${data.result.download_status}</p>
+              <p><strong>Cloud Download Status:</strong> ${data.result.cloud_download_status}</p>
+              <p><strong>Destination Path:</strong> ${data.result.destination_path}</p>
+            `;
+            showResultBox(true);
+            toast('Process completed successfully!', false);
+            showProgress(false);
+            isUploading = false;
+            currentTaskId = null;
+            return { completed: true };
+          }
+          return { completed: false, progress: data.progress };
+        }
+        return { completed: false };
+      } catch (err) {
+        logDebug('Error checking task status', { error: err.message });
+        return { completed: false };
       }
-      showProgress(true);
-      updateProgressBar(0);
-      statusImageEl.src = STATUS_IMAGES.uploading;
-      eventSource = new EventSource(`${API_BASE}/api/progress?task_id=${taskId}`);
-      eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        logDebug(data.log);
-        updateProgressBar(data.progress);
-        if (data.progress < 0) {
-          statusImageEl.src = STATUS_IMAGES.error;
-          toast(data.log || 'Process failed.', true);
+    }
+
+    function startProgressStream(taskId, retryCount = 0, maxRetries = 5) {
+      if (currentTaskId !== taskId) return; // Ignore outdated task IDs
+      const connect = async () => {
+        if (eventSource) {
           eventSource.close();
           eventSource = null;
-          showProgress(false);
-          isUploading = false;
-          return;
         }
-        if (data.progress >= 100 && data.result) {
-          statusImageEl.src = STATUS_IMAGES.success;
-          resultBoxEl.innerHTML = `
-            <p><strong>Title:</strong> ${data.result.title}</p>
-            <p><strong>Season:</strong> ${data.result.season_nr || 'N/A'}</p>
-            <p><strong>Download Status:</strong> ${data.result.download_status}</p>
-            <p><strong>Cloud Download Status:</strong> ${data.result.cloud_download_status}</p>
-            <p><strong>Destination Path:</strong> ${data.result.destination_path}</p>
-          `;
-          showResultBox(true);
-          toast('Process completed successfully!', false);
+
+        // Check current task status before opening EventSource
+        const status = await checkTaskStatus(taskId);
+        if (status.completed) return; // Task already done, no need for EventSource
+        if (status.progress !== undefined) {
+          showProgress(true); // Ensure progress UI is visible
+        }
+
+        eventSource = new EventSource(`${API_BASE}/api/progress?task_id=${taskId}`);
+        eventSource.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          logDebug(data.log);
+          updateProgressBar(data.progress);
+          if (data.progress < 0) {
+            statusImageEl.src = STATUS_IMAGES.error;
+            toast(data.log || 'Process failed.', true);
+            eventSource.close();
+            eventSource = null;
+            showProgress(false);
+            isUploading = false;
+            currentTaskId = null;
+          } else if (data.progress >= 100 && data.result) {
+            statusImageEl.src = STATUS_IMAGES.success;
+            resultBoxEl.innerHTML = `
+              <p><strong>Title:</strong> ${data.result.title}</p>
+              <p><strong>Season:</strong> ${data.result.season_nr || 'N/A'}</p>
+              <p><strong>Download Status:</strong> ${data.result.download_status}</p>
+              <p><strong>Cloud Download Status:</strong> ${data.result.cloud_download_status}</p>
+              <p><strong>Destination Path:</strong> ${data.result.destination_path}</p>
+            `;
+            showResultBox(true);
+            toast('Process completed successfully!', false);
+            eventSource.close();
+            eventSource = null;
+            setTimeout(() => showProgress(false), 1000);
+            isUploading = false;
+            currentTaskId = null;
+          }
+        };
+        eventSource.onerror = () => {
+          logDebug(`Progress stream error for task ${taskId}, retry ${retryCount + 1}/${maxRetries}`);
           eventSource.close();
           eventSource = null;
-          setTimeout(() => showProgress(false), 1000);
-          isUploading = false;
-        }
+          if (retryCount < maxRetries) {
+            const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s, 8s, 16s
+            setTimeout(() => startProgressStream(taskId, retryCount + 1, maxRetries), delay);
+          } else {
+            statusImageEl.src = STATUS_IMAGES.error;
+            toast('Failed to reconnect to progress stream after retries.', true);
+            showProgress(false);
+            isUploading = false;
+            currentTaskId = null;
+          }
+        };
       };
-      eventSource.onerror = () => {
-        logDebug('Progress stream error or closed');
-        statusImageEl.src = STATUS_IMAGES.error;
-        eventSource.close();
-        eventSource = null;
-        showProgress(false);
-        isUploading = false;
-      };
+      connect();
     }
 
     debugToggleEl.addEventListener('click', () => {
@@ -623,12 +690,13 @@
       showDialog(false);
       showLoader(true);
       const taskId = crypto.randomUUID();
+      currentTaskId = taskId; // Track current task
       startProgressStream(taskId);
       try {
         logDebug(`Sending request to: ${API_BASE}/api/process-upload`);
         logDebug('POST /api/process-upload request', { url: item.url, task_id: taskId });
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
         const res = await fetch(`${API_BASE}/api/process-upload`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -648,6 +716,7 @@
         eventSource = null;
         showProgress(false);
         isUploading = false;
+        currentTaskId = null;
       } finally {
         showLoader(false);
       }
@@ -667,7 +736,7 @@
         logDebug(`Sending request to: ${API_BASE}/api/scrape?q=${encodeURIComponent(q)}`);
         logDebug('GET /api/scrape request', { query: q });
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
         const res = await fetch(`${API_BASE}/api/scrape?q=${encodeURIComponent(q)}`, {
           headers: { 'Accept': 'application/json' },
           signal: controller.signal
@@ -694,6 +763,31 @@
         showLoader(false);
       }
     }
+
+    // Check for existing task on page load
+    window.addEventListener('load', () => {
+      const storedTaskId = localStorage.getItem('currentTaskId');
+      if (storedTaskId && !isUploading) {
+        currentTaskId = storedTaskId;
+        logDebug(`Restoring task ${currentTaskId} on page load`);
+        startProgressStream(currentTaskId);
+      }
+    });
+
+    // Store task ID on visibility change to handle phone sleep
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && currentTaskId) {
+        localStorage.setItem('currentTaskId', currentTaskId);
+        logDebug(`Stored task ${currentTaskId} on visibility hidden`);
+      } else if (document.visibilityState === 'visible' && localStorage.getItem('currentTaskId')) {
+        const storedTaskId = localStorage.getItem('currentTaskId');
+        if (storedTaskId && !isUploading && storedTaskId !== currentTaskId) {
+          currentTaskId = storedTaskId;
+          logDebug(`Restoring task ${currentTaskId} on visibility visible`);
+          startProgressStream(currentTaskId);
+        }
+      }
+    });
 
     document.getElementById('searchBtn').addEventListener('click', search);
     document.getElementById('searchInput').addEventListener('keydown', (e) => {
