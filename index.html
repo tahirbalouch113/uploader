@@ -469,7 +469,7 @@
   </div>
 
   <script>
-    const API_BASE = 'https://identifier-school-tale-a.trycloudflare.com';
+    const API_BASE = 'http://38.102.124.94:3002';
     const resultsEl = document.getElementById('results');
     const loaderEl = document.getElementById('loader');
     const toastEl = document.getElementById('toast');
@@ -482,8 +482,8 @@
     const progressBarEl = document.getElementById('progressBar');
     const progressTextEl = document.getElementById('progressText');
     const statusImageEl = document.getElementById('statusImage');
-    const MAX_CLOUD_DOWNLOAD_RETRIES = 3;
     let eventSource = null;
+    let isUploading = false; // Lock to prevent double-clicks
 
     const STATUS_IMAGES = {
       uploading: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23ffcc66' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M17.66 6.34l1.41-1.41'/%3E%3C/svg%3E",
@@ -519,6 +519,8 @@
       progressTextEl.textContent = `${percentage}%`;
       if (percentage >= 100) {
         statusImageEl.src = STATUS_IMAGES.success;
+      } else if (percentage < 0) {
+        statusImageEl.src = STATUS_IMAGES.error;
       }
     }
 
@@ -534,10 +536,30 @@
         const data = JSON.parse(event.data);
         logDebug(data.log);
         updateProgressBar(data.progress);
-        if (data.progress >= 100) {
+        if (data.progress < 0) {
+          statusImageEl.src = STATUS_IMAGES.error;
+          toast(data.log || 'Process failed.', true);
+          eventSource.close();
+          eventSource = null;
+          showProgress(false);
+          isUploading = false;
+          return;
+        }
+        if (data.progress >= 100 && data.result) {
+          statusImageEl.src = STATUS_IMAGES.success;
+          resultBoxEl.innerHTML = `
+            <p><strong>Title:</strong> ${data.result.title}</p>
+            <p><strong>Season:</strong> ${data.result.season_nr || 'N/A'}</p>
+            <p><strong>Download Status:</strong> ${data.result.download_status}</p>
+            <p><strong>Cloud Download Status:</strong> ${data.result.cloud_download_status}</p>
+            <p><strong>Destination Path:</strong> ${data.result.destination_path}</p>
+          `;
+          showResultBox(true);
+          toast('Process completed successfully!', false);
           eventSource.close();
           eventSource = null;
           setTimeout(() => showProgress(false), 1000);
+          isUploading = false;
         }
       };
       eventSource.onerror = () => {
@@ -546,6 +568,7 @@
         eventSource.close();
         eventSource = null;
         showProgress(false);
+        isUploading = false;
       };
     }
 
@@ -575,110 +598,56 @@
       tag.textContent = item.type ? String(item.type).toUpperCase() : 'TITLE';
       el.appendChild(tag);
       el.addEventListener('click', () => {
+        if (isUploading) {
+          toast('Another upload is in progress. Please wait.', true);
+          return;
+        }
         showDialog(true);
-        document.getElementById('dialogConfirm').onclick = () => uploadItem(item);
-        document.getElementById('dialogCancel').onclick = () => showDialog(false);
+        document.getElementById('dialogConfirm').onclick = () => {
+          if (!isUploading) {
+            isUploading = true;
+            el.style.pointerEvents = 'none'; // Disable card during upload
+            uploadItem(item).finally(() => {
+              el.style.pointerEvents = 'auto'; // Re-enable card after process
+            });
+          }
+        };
+        document.getElementById('dialogCancel').onclick = () => {
+          showDialog(false);
+        };
       });
       return el;
-    }
-
-    async function tryCloudDownload(payload, attempt = 1) {
-      logDebug(`Sending request to: ${API_BASE}/api/cloud-download (Attempt ${attempt}/${MAX_CLOUD_DOWNLOAD_RETRIES})`);
-      logDebug('POST /api/cloud-download request', payload);
-      try {
-        const cloudDownloadRes = await fetch(`${API_BASE}/api/cloud-download`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (!cloudDownloadRes.ok) throw new Error(`POST /api/cloud-download error: ${cloudDownloadRes.status}`);
-        const cloudDownloadData = await cloudDownloadRes.json();
-        logDebug('POST /api/cloud-download response', cloudDownloadData);
-        return { success: true, data: cloudDownloadData };
-      } catch (err) {
-        logDebug(`Cloud download attempt ${attempt} failed`, { error: err.message });
-        if (attempt < MAX_CLOUD_DOWNLOAD_RETRIES) {
-          logDebug(`Retrying cloud download (Attempt ${attempt + 1}/${MAX_CLOUD_DOWNLOAD_RETRIES})`);
-          return tryCloudDownload(payload, attempt + 1);
-        }
-        return { success: false, error: err.message };
-      }
     }
 
     async function uploadItem(item) {
       showDialog(false);
       showLoader(true);
-      let postData, downloadData;
       const taskId = crypto.randomUUID();
       startProgressStream(taskId);
       try {
-        logDebug(`Sending request to: ${API_BASE}/api/scrape`);
-        logDebug('POST /api/scrape request', { url: item.url });
-        const postRes = await fetch(`${API_BASE}/api/scrape`, {
+        logDebug(`Sending request to: ${API_BASE}/api/process-upload`);
+        logDebug('POST /api/process-upload request', { url: item.url, task_id: taskId });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+        const res = await fetch(`${API_BASE}/api/process-upload`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ url: item.url })
+          body: JSON.stringify({ url: item.url, task_id: taskId }),
+          signal: controller.signal
         });
-        if (!postRes.ok) throw new Error(`POST /api/scrape error: ${postRes.status}`);
-        postData = await postRes.json();
-        logDebug('POST /api/scrape response', postData);
-        
-        logDebug(`Sending request to: ${API_BASE}/api/download?url=${encodeURIComponent(postData.gd_link)}`);
-        logDebug('GET /api/download request', { url: postData.gd_link });
-        const downloadRes = await fetch(`${API_BASE}/api/download?url=${encodeURIComponent(postData.gd_link)}`, {
-          headers: { 'Accept': 'application/json' }
-        });
-        if (!downloadRes.ok) throw new Error(`GET /api/download error: ${downloadRes.status}`);
-        downloadData = await downloadRes.json();
-        logDebug('GET /api/download response', downloadData);
-
-        if (downloadData.status !== 'completed' || !downloadData.cloud_url) {
-          throw new Error(`Download failed: ${downloadData.status}`);
-        }
-
-        const cloudDownloadPayload = {
-          mode: postData.mode,
-          name: postData.title,
-          season_number: postData.mode === 'TV' ? postData.season_nr : null,
-          file_name: downloadData.cloud_filename || 'default.mkv',
-          link: downloadData.cloud_url,
-          task_id: taskId
-        };
-        const cloudDownloadResult = await tryCloudDownload(cloudDownloadPayload);
-        
-        const cloudDownloadStatus = cloudDownloadResult.success ? cloudDownloadResult.data.status : 'failed';
-        const destinationPath = cloudDownloadResult.success ? (cloudDownloadResult.data.destination_path || 'N/A') : 'N/A';
-        
-        resultBoxEl.innerHTML = `
-          <p><strong>Title:</strong> ${postData.title}</p>
-          <p><strong>Season:</strong> ${postData.season_nr}</p>
-          <p><strong>Download Status:</strong> ${downloadData.status}</p>
-          <p><strong>Cloud Download Status:</strong> ${cloudDownloadStatus}</p>
-          <p><strong>Destination Path:</strong> ${destinationPath}</p>
-        `;
-        showResultBox(true);
-        if (cloudDownloadResult.success) {
-          toast('Upload and download completed successfully!', false);
-          statusImageEl.src = STATUS_IMAGES.success;
-        } else {
-          toast('Cloud download failed after retries. Check debug output for details.', true);
-          statusImageEl.src = STATUS_IMAGES.error;
-        }
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error(`POST /api/process-upload error: ${res.status}`);
+        const data = await res.json();
+        logDebug('POST /api/process-upload response', data);
       } catch (err) {
         console.error(err);
-        logDebug('Error during upload, download, or cloud download', { error: err.message });
-        toast('Error during process. Is FastAPI running on 38.102.124.94:3002?', true);
+        logDebug('Error starting upload process', { error: err.message });
+        toast('Error starting process. Check if backend is running at http://38.102.124.94:3002.', true);
         statusImageEl.src = STATUS_IMAGES.error;
-        if (postData) {
-          resultBoxEl.innerHTML = `
-            <p><strong>Title:</strong> ${postData.title}</p>
-            <p><strong>Season:</strong> ${postData.season_nr}</p>
-            <p><strong>Download Status:</strong> ${downloadData ? downloadData.status : 'failed'}</p>
-            <p><strong>Cloud Download Status:</strong> failed</p>
-            <p><strong>Destination Path:</strong> N/A</p>
-          `;
-          showResultBox(true);
-        }
+        if (eventSource) eventSource.close();
+        eventSource = null;
+        showProgress(false);
+        isUploading = false;
       } finally {
         showLoader(false);
       }
@@ -697,9 +666,13 @@
       try {
         logDebug(`Sending request to: ${API_BASE}/api/scrape?q=${encodeURIComponent(q)}`);
         logDebug('GET /api/scrape request', { query: q });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
         const res = await fetch(`${API_BASE}/api/scrape?q=${encodeURIComponent(q)}`, {
-          headers: { 'Accept': 'application/json' }
+          headers: { 'Accept': 'application/json' },
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         if (!res.ok) throw new Error(`Backend error: ${res.status}`);
         const data = await res.json();
         logDebug('GET /api/scrape response', data);
@@ -716,7 +689,7 @@
       } catch (err) {
         console.error(err);
         logDebug('Error fetching results', { error: err.message });
-        toast('Error fetching results. Is FastAPI running on 38.102.124.94:3002?', true);
+        toast('Error fetching results. Check if backend is running at http://38.102.124.94:3002.', true);
       } finally {
         showLoader(false);
       }
