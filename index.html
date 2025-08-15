@@ -361,16 +361,16 @@
 
     .progress-container {
       margin-top: 16px;
-      padding: 12px;
+      padding: 14px;
       border: 1px solid var(--border);
       border-radius: 12px;
       background: rgba(255,255,255,.05);
       position: relative;
     }
     .progress-bar {
-      height: 20px;
+      height: 24px;
       background: linear-gradient(90deg, var(--accent), var(--accent2));
-      border-radius: 10px;
+      border-radius: 12px;
       width: 0%;
       transition: width 0.3s ease;
     }
@@ -379,9 +379,9 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: 0.9rem;
+      font-size: 1rem;
       color: var(--text);
-      font-weight: 600;
+      font-weight: 700;
     }
     .status-image {
       position: absolute;
@@ -406,10 +406,11 @@
       .dialog { padding: 16px; }
       .dialog h2 { font-size: 1.1rem; }
       .dialog p { font-size: 0.85rem; }
-      .debug-content { font-size: 0.8rem; max-height: 200px; }
+      .debug-content { font-size: 0.82rem; max-height: 250px; padding: 10px; }
       .loader { width: 32px; height: 32px; border-width: 3px; }
-      .progress-container { padding: 8px; }
-      .progress-text { font-size: 0.8rem; }
+      .progress-container { padding: 10px; }
+      .progress-bar { height: 20px; border-radius: 10px; }
+      .progress-text { font-size: 0.9rem; }
       .status-image { width: 24px; height: 24px; top: 6px; right: 6px; }
     }
   </style>
@@ -483,8 +484,9 @@
     const progressTextEl = document.getElementById('progressText');
     const statusImageEl = document.getElementById('statusImage');
     let eventSource = null;
-    let isUploading = false; // Lock to prevent double-clicks
-    let currentTaskId = null; // Track current task ID
+    let isUploading = false;
+    let currentTaskId = null;
+    const MAX_LOG_LINES = 1000;
 
     const STATUS_IMAGES = {
       uploading: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24' fill='none' stroke='%23ffcc66' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M17.66 6.34l1.41-1.41'/%3E%3C/svg%3E",
@@ -511,8 +513,23 @@
     function logDebug(message, data = null) {
       const timestamp = new Date().toISOString();
       const formattedData = data ? JSON.stringify(data, null, 2) : '';
-      debugContentEl.textContent += `[${timestamp}] ${message}\n${formattedData ? formattedData + '\n\n' : ''}`;
+      const logEntry = `[${timestamp}] ${message}\n${formattedData ? formattedData + '\n\n' : ''}`;
+      let currentLogs = debugContentEl.textContent.split('\n');
+      currentLogs.push(logEntry);
+      if (currentLogs.length > MAX_LOG_LINES) {
+        currentLogs = currentLogs.slice(-MAX_LOG_LINES);
+      }
+      debugContentEl.textContent = currentLogs.join('\n');
       debugContentEl.scrollTop = debugContentEl.scrollHeight;
+      localStorage.setItem('debugLogs', debugContentEl.textContent);
+    }
+
+    function restoreDebugLogs() {
+      const savedLogs = localStorage.getItem('debugLogs');
+      if (savedLogs) {
+        debugContentEl.textContent = savedLogs;
+        debugContentEl.scrollTop = debugContentEl.scrollHeight;
+      }
     }
 
     function updateProgressBar(percentage) {
@@ -523,11 +540,12 @@
       } else if (percentage < 0) {
         statusImageEl.src = STATUS_IMAGES.error;
       }
+      localStorage.setItem('progressState', JSON.stringify({ percentage, taskId: currentTaskId }));
     }
 
     async function checkTaskStatus(taskId) {
       try {
-        logDebug(`Checking task status: ${API_BASE}/api/progress?task_id=${taskId}`);
+        logDebug(`API: Checking task status: ${API_BASE}/api/progress?task_id=${taskId}`);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
         const res = await fetch(`${API_BASE}/api/progress?task_id=${taskId}`, {
@@ -535,18 +553,20 @@
           signal: controller.signal
         });
         clearTimeout(timeoutId);
-        if (!res.ok) throw new Error(`Task status check error: ${res.status}`);
+        if (!res.ok) throw new Error(`API: Task status check error: ${res.status}`);
         const data = await res.json();
-        logDebug('Task status response', data);
+        logDebug('API: Task status response', data);
         if (data.progress !== undefined) {
           updateProgressBar(data.progress);
-          if (data.log) logDebug(data.log);
+          if (data.log) logDebug(`API: Progress log: ${data.log}`);
           if (data.progress < 0) {
             statusImageEl.src = STATUS_IMAGES.error;
             toast(data.log || 'Process failed.', true);
             showProgress(false);
             isUploading = false;
             currentTaskId = null;
+            localStorage.removeItem('progressState');
+            localStorage.removeItem('currentTaskId');
             return { completed: false };
           }
           if (data.progress >= 100 && data.result) {
@@ -563,36 +583,65 @@
             showProgress(false);
             isUploading = false;
             currentTaskId = null;
+            localStorage.removeItem('progressState');
+            localStorage.removeItem('currentTaskId');
             return { completed: true };
           }
           return { completed: false, progress: data.progress };
         }
         return { completed: false };
       } catch (err) {
-        logDebug('Error checking task status', { error: err.message });
+        logDebug('API: Error checking task status', { error: err.message });
         return { completed: false };
       }
     }
 
+    async function checkActiveTasks() {
+      try {
+        logDebug(`API: Checking active tasks: ${API_BASE}/api/active-tasks`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const res = await fetch(`${API_BASE}/api/active-tasks`, {
+          headers: { 'Accept': 'application/json' },
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error(`API: Active tasks check error: ${res.status}`);
+        const data = await res.json();
+        logDebug('API: Active tasks response', data);
+        return data;
+      } catch (err) {
+        logDebug('API: Error checking active tasks', { error: err.message });
+        return { active_tasks: 0, task_ids: [] };
+      }
+    }
+
     function startProgressStream(taskId, retryCount = 0, maxRetries = 5) {
-      if (currentTaskId !== taskId) return; // Ignore outdated task IDs
+      if (currentTaskId !== taskId) {
+        logDebug(`API: Ignoring outdated task ${taskId}`);
+        return;
+      }
       const connect = async () => {
         if (eventSource) {
           eventSource.close();
           eventSource = null;
+          logDebug('API: Closed existing EventSource');
         }
 
-        // Check current task status before opening EventSource
         const status = await checkTaskStatus(taskId);
-        if (status.completed) return; // Task already done, no need for EventSource
+        if (status.completed) return;
         if (status.progress !== undefined) {
-          showProgress(true); // Ensure progress UI is visible
+          showProgress(true);
         }
 
+        logDebug(`API: Starting EventSource for task ${taskId}`);
         eventSource = new EventSource(`${API_BASE}/api/progress?task_id=${taskId}`);
+        eventSource.onopen = () => {
+          logDebug(`API: EventSource opened for task ${taskId}`);
+        };
         eventSource.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          logDebug(data.log);
+          logDebug(`API: Progress update: ${data.log}`, { progress: data.progress, result: data.result });
           updateProgressBar(data.progress);
           if (data.progress < 0) {
             statusImageEl.src = STATUS_IMAGES.error;
@@ -602,6 +651,8 @@
             showProgress(false);
             isUploading = false;
             currentTaskId = null;
+            localStorage.removeItem('progressState');
+            localStorage.removeItem('currentTaskId');
           } else if (data.progress >= 100 && data.result) {
             statusImageEl.src = STATUS_IMAGES.success;
             resultBoxEl.innerHTML = `
@@ -615,17 +666,19 @@
             toast('Process completed successfully!', false);
             eventSource.close();
             eventSource = null;
-            setTimeout(() => showProgress(false), 1000);
+            setTimeout(() => showProgress(false), 2000);
             isUploading = false;
             currentTaskId = null;
+            localStorage.removeItem('progressState');
+            localStorage.removeItem('currentTaskId');
           }
         };
         eventSource.onerror = () => {
-          logDebug(`Progress stream error for task ${taskId}, retry ${retryCount + 1}/${maxRetries}`);
+          logDebug(`API: Progress stream error for task ${taskId}, retry ${retryCount + 1}/${maxRetries}`);
           eventSource.close();
           eventSource = null;
           if (retryCount < maxRetries) {
-            const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s, 8s, 16s
+            const delay = Math.pow(2, retryCount) * 1000;
             setTimeout(() => startProgressStream(taskId, retryCount + 1, maxRetries), delay);
           } else {
             statusImageEl.src = STATUS_IMAGES.error;
@@ -633,6 +686,8 @@
             showProgress(false);
             isUploading = false;
             currentTaskId = null;
+            localStorage.removeItem('progressState');
+            localStorage.removeItem('currentTaskId');
           }
         };
       };
@@ -664,18 +719,30 @@
       tag.className = 'pill';
       tag.textContent = item.type ? String(item.type).toUpperCase() : 'TITLE';
       el.appendChild(tag);
-      el.addEventListener('click', () => {
+      el.addEventListener('click', async () => {
         if (isUploading) {
           toast('Another upload is in progress. Please wait.', true);
+          return;
+        }
+        const activeTasks = await checkActiveTasks();
+        if (activeTasks.active_tasks > 0) {
+          logDebug(`API: Cannot start new upload. ${activeTasks.active_tasks} active task(s) in progress: ${activeTasks.task_ids.join(', ')}`);
+          toast('Another upload is in progress. Please wait until it completes.', true);
+          if (activeTasks.task_ids.length > 0 && !currentTaskId) {
+            currentTaskId = activeTasks.task_ids[0];
+            localStorage.setItem('currentTaskId', currentTaskId);
+            logDebug(`API: Resuming monitoring of active task ${currentTaskId}`);
+            startProgressStream(currentTaskId);
+          }
           return;
         }
         showDialog(true);
         document.getElementById('dialogConfirm').onclick = () => {
           if (!isUploading) {
             isUploading = true;
-            el.style.pointerEvents = 'none'; // Disable card during upload
+            el.style.pointerEvents = 'none';
             uploadItem(item).finally(() => {
-              el.style.pointerEvents = 'auto'; // Re-enable card after process
+              el.style.pointerEvents = 'auto';
             });
           }
         };
@@ -690,13 +757,14 @@
       showDialog(false);
       showLoader(true);
       const taskId = crypto.randomUUID();
-      currentTaskId = taskId; // Track current task
+      currentTaskId = taskId;
+      localStorage.setItem('currentTaskId', taskId);
+      logDebug('API: Starting upload', { url: item.url, task_id: taskId });
       startProgressStream(taskId);
       try {
-        logDebug(`Sending request to: ${API_BASE}/api/process-upload`);
-        logDebug('POST /api/process-upload request', { url: item.url, task_id: taskId });
+        logDebug(`API: Sending POST request to: ${API_BASE}/api/process-upload`);
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         const res = await fetch(`${API_BASE}/api/process-upload`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -704,12 +772,12 @@
           signal: controller.signal
         });
         clearTimeout(timeoutId);
-        if (!res.ok) throw new Error(`POST /api/process-upload error: ${res.status}`);
+        if (!res.ok) throw new Error(`API: POST /api/process-upload error: ${res.status}`);
         const data = await res.json();
-        logDebug('POST /api/process-upload response', data);
+        logDebug('API: POST /api/process-upload response', data);
       } catch (err) {
         console.error(err);
-        logDebug('Error starting upload process', { error: err.message });
+        logDebug('API: Error starting upload process', { error: err.message });
         toast('Error starting process. Check if backend is running at http://38.102.124.94:3002.', true);
         statusImageEl.src = STATUS_IMAGES.error;
         if (eventSource) eventSource.close();
@@ -717,6 +785,8 @@
         showProgress(false);
         isUploading = false;
         currentTaskId = null;
+        localStorage.removeItem('progressState');
+        localStorage.removeItem('currentTaskId');
       } finally {
         showLoader(false);
       }
@@ -733,18 +803,17 @@
       setLoadingGrid(true);
       showLoader(true);
       try {
-        logDebug(`Sending request to: ${API_BASE}/api/scrape?q=${encodeURIComponent(q)}`);
-        logDebug('GET /api/scrape request', { query: q });
+        logDebug(`API: Sending GET request to: ${API_BASE}/api/scrape?q=${encodeURIComponent(q)}`);
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         const res = await fetch(`${API_BASE}/api/scrape?q=${encodeURIComponent(q)}`, {
           headers: { 'Accept': 'application/json' },
           signal: controller.signal
         });
         clearTimeout(timeoutId);
-        if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+        if (!res.ok) throw new Error(`API: Backend error: ${res.status}`);
         const data = await res.json();
-        logDebug('GET /api/scrape response', data);
+        logDebug('API: GET /api/scrape response', data);
         clearGrid();
         if (!data.results || !data.results.length) {
           emptyEl.style.display = 'block';
@@ -757,33 +826,71 @@
         }
       } catch (err) {
         console.error(err);
-        logDebug('Error fetching results', { error: err.message });
+        logDebug('API: Error fetching results', { error: err.message });
         toast('Error fetching results. Check if backend is running at http://38.102.124.94:3002.', true);
       } finally {
         showLoader(false);
       }
     }
 
-    // Check for existing task on page load
-    window.addEventListener('load', () => {
+    // Restore state on page load
+    window.addEventListener('load', async () => {
+      restoreDebugLogs();
       const storedTaskId = localStorage.getItem('currentTaskId');
-      if (storedTaskId && !isUploading) {
+      const storedProgress = localStorage.getItem('progressState');
+      const activeTasks = await checkActiveTasks();
+      if (activeTasks.active_tasks > 0 && !isUploading) {
+        currentTaskId = activeTasks.task_ids[0];
+        localStorage.setItem('currentTaskId', currentTaskId);
+        logDebug(`API: Found active task ${currentTaskId} on page load`);
+        if (storedProgress) {
+          const { percentage } = JSON.parse(storedProgress);
+          updateProgressBar(percentage);
+          showProgress(true);
+        }
+        startProgressStream(currentTaskId);
+      } else if (storedTaskId && !isUploading) {
         currentTaskId = storedTaskId;
-        logDebug(`Restoring task ${currentTaskId} on page load`);
+        logDebug(`API: Restoring task ${currentTaskId} from localStorage`);
+        if (storedProgress) {
+          const { percentage } = JSON.parse(storedProgress);
+          updateProgressBar(percentage);
+          showProgress(true);
+        }
         startProgressStream(currentTaskId);
       }
     });
 
-    // Store task ID on visibility change to handle phone sleep
-    document.addEventListener('visibilitychange', () => {
+    // Handle phone sleep/wake
+    document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState === 'hidden' && currentTaskId) {
         localStorage.setItem('currentTaskId', currentTaskId);
-        logDebug(`Stored task ${currentTaskId} on visibility hidden`);
-      } else if (document.visibilityState === 'visible' && localStorage.getItem('currentTaskId')) {
+        localStorage.setItem('debugLogs', debugContentEl.textContent);
+        logDebug(`API: Stored task ${currentTaskId} on visibility hidden`);
+      } else if (document.visibilityState === 'visible') {
+        restoreDebugLogs();
         const storedTaskId = localStorage.getItem('currentTaskId');
-        if (storedTaskId && !isUploading && storedTaskId !== currentTaskId) {
+        const activeTasks = await checkActiveTasks();
+        if (activeTasks.active_tasks > 0 && !isUploading) {
+          currentTaskId = activeTasks.task_ids[0];
+          localStorage.setItem('currentTaskId', currentTaskId);
+          logDebug(`API: Resuming active task ${currentTaskId} on visibility visible`);
+          const storedProgress = localStorage.getItem('progressState');
+          if (storedProgress) {
+            const { percentage } = JSON.parse(storedProgress);
+            updateProgressBar(percentage);
+            showProgress(true);
+          }
+          startProgressStream(currentTaskId);
+        } else if (storedTaskId && !isUploading && storedTaskId !== currentTaskId) {
           currentTaskId = storedTaskId;
-          logDebug(`Restoring task ${currentTaskId} on visibility visible`);
+          logDebug(`API: Restoring task ${currentTaskId} from localStorage on visibility visible`);
+          const storedProgress = localStorage.getItem('progressState');
+          if (storedProgress) {
+            const { percentage } = JSON.parse(storedProgress);
+            updateProgressBar(percentage);
+            showProgress(true);
+          }
           startProgressStream(currentTaskId);
         }
       }
